@@ -13,6 +13,26 @@ from .llm import ChatModel
 from .models import Advice, Assessment, CriterionScore, LabeledScore, Output, ProposedAdvice, Question
 
 
+EARLY_STAGE_RUBRIC = (
+    "Приоритетная шкала для ранних и учебных проектов (ориентиры 0–10, "
+    "при иной шкале пересчитай пропорционально). "
+    "0–1: есть конкретные доказательства несостоятельности или критические противоречия. "
+    "2: данных по критерию нет; это неопределённость, а не доказанный провал. "
+    "3–4: есть понятная гипотеза, логичное объяснение или конкретный план проверки. "
+    "5–6: есть содержательная проработка, прототип, интервью, предварительный расчёт "
+    "или договорённость о пилоте, относящиеся к этому критерию. "
+    "7–8: есть результаты проверки, реальные пользователи или подтверждённые показатели. "
+    "9–10: сильные повторяемые результаты. Оценивай каждый критерий отдельно. "
+    "Отсутствие продаж у раннего проекта само по себе не обнуляет бизнес-модель, "
+    "реалистичность и привлекательность. Для первых продаж учитывай промежуточный "
+    "прогресс: конкретный план продаж 3–4, согласованный пилот 5, оплаченный пилот 6–7. "
+    "Не требуй зрелости действующего бизнеса от студенческого прототипа. "
+    "Не выдумывай подтверждения, отмечай гипотезы и пробелы в обосновании. "
+    "Это правило заменяет прежнее требование ставить 0 при недостатке данных. "
+    "Верни числовые баллы; веса и итог рассчитывает сервер."
+)
+
+
 class State(TypedDict, total=False):
     persona: str
     policy: dict
@@ -90,7 +110,7 @@ def _assessment(raw, policy: Policy, weights: dict[str, float]) -> dict:
     total_weight = fsum(weights.values())
     for item in policy.criteria:
         entry = by_id[item.id]
-        score = entry.score if entry.score is not None else 0.0
+        score = entry.score if entry.score is not None else policy.score_min + 0.2 * (policy.score_max - policy.score_min)
         if score != 0 and not policy.score_min <= score <= policy.score_max:
             raise ValueError("Score outside configured scale")
         criteria.append(LabeledScore(id=item.id, label=item.label, score=score, rationale=entry.rationale))
@@ -156,11 +176,7 @@ def build_graph(model: ChatModel, checkpointer):
             f"Схема ответа: {structure}",
         ]
         if stage == "assessment":
-            instructions.append(
-                "Обязательное правило оценки. Если по критерию нет достаточных данных, "
-                "score равен числу 0, даже если другие инструкции предлагают null или низкий балл. "
-                "Например, если анализа рынка и конкурентов нет, поставь 0 и объясни пробел."
-            )
+            instructions.append(EARLY_STAGE_RUBRIC)
         return model.ask(stage, "\n".join(instructions), context, validate)
 
     def inspect(state: State):

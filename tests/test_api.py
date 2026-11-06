@@ -171,8 +171,8 @@ def test_session_restart_and_idempotent_submissions(tmp_path):
         final = response.json()
         assert final["status"] == "completed"
         assert final["questions"] == initial["questions"]
-        assert final["assessment"]["score"] == pytest.approx(4.12)
-        assert final["assessment"]["criteria"][0]["score"] == 0
+        assert final["assessment"]["score"] == pytest.approx(4.44)
+        assert final["assessment"]["criteria"][0]["score"] == 2
         assert len(final["advice"]) == 3
         assert all(item["estimated_days"] == 2 for item in final["advice"])
         assert client.get(url).json() == final
@@ -189,7 +189,7 @@ def test_session_restart_and_idempotent_submissions(tmp_path):
     workers = [data for stage, data in provider.calls if stage == "category_advice"]
     assert len(workers) == 7
     assert all(
-        len(item["questions_and_answers"]) == 5 and item["assessment"]["score"] == pytest.approx(4.12)
+        len(item["questions_and_answers"]) == 5 and item["assessment"]["score"] == pytest.approx(4.44)
         for item in workers
     )
     chief, = [data for stage, data in provider.calls if stage == "select_advice"]
@@ -311,10 +311,10 @@ def test_assessment_weights_by_persona_and_missing_scores(tmp_path):
         for index, criterion in enumerate(policy.criteria)
     ]}
     expected_scores = {
-        "business_angel": 4.28,
-        "corporation": 4.12,
-        "grant_fund": 4.55,
-        "venture_fund": 4.46,
+        "business_angel": 4.52,
+        "corporation": 4.44,
+        "grant_fund": 4.83,
+        "venture_fund": 4.60,
     }
     for role, expected in expected_scores.items():
         weights = policy.assessment_weights[role]
@@ -324,8 +324,13 @@ def test_assessment_weights_by_persona_and_missing_scores(tmp_path):
     for criterion in raw["criteria"]:
         criterion["score"] = None
     result = _assessment(raw, policy, policy.assessment_weights["grant_fund"])
-    assert result["score"] == 0
-    assert all(item["score"] == 0 for item in result["criteria"])
+    assert result["score"] == pytest.approx(2)
+    assert all(item["score"] == 2 for item in result["criteria"])
+
+    # Explicit evidence-based zeroes remain zero; uncertainty is not failure.
+    for criterion in raw["criteria"]:
+        criterion["score"] = 0
+    assert _assessment(raw, policy, policy.assessment_weights["grant_fund"])["score"] == 0
 
     legacy = type(policy).model_validate(policy.model_dump(exclude={"assessment_weights"}))
     assert legacy.assessment_weights == policy.assessment_weights
