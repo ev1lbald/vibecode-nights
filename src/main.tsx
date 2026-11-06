@@ -764,7 +764,7 @@ function Training({ id, config }: { id: string; config: Config }) {
               {q.category_id
                 ? (config.categories.find((c) => c.id === q.category_id)
                     ?.label ?? "Вопрос инвестора")
-                : "Клиент и проблема"}
+                : "Общий вопрос"}
             </small>
             <h2>{q.text}</h2>
           </div>
