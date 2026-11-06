@@ -1,3 +1,4 @@
+from functools import cache
 from pathlib import Path
 import tomllib
 from typing import Annotated
@@ -10,6 +11,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 ConfigId = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 PositiveInt = Annotated[int, Field(gt=0)]
+PositiveWeight = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+DEFAULT_POLICY_PATH = Path(__file__).with_name("defaults.toml")
+
+
+@cache
+def _default_assessment_weights() -> dict[str, dict[str, float]]:
+    with DEFAULT_POLICY_PATH.open("rb") as file:
+        return tomllib.load(file)["assessment_weights"]
 
 
 class ConfigModel(BaseModel):
@@ -55,6 +64,7 @@ class Policy(ConfigModel):
     personas: Annotated[list[Role], Field(min_length=1)]
     categories: Annotated[list[Role], Field(min_length=1)]
     criteria: Annotated[list[Label], Field(min_length=1)]
+    assessment_weights: dict[str, dict[str, PositiveWeight]] | None = None
 
     @model_validator(mode="after")
     def validate_counts_and_ids(self):
@@ -67,7 +77,25 @@ class Policy(ConfigModel):
             raise ValueError("question_count exceeds the number of candidates")
         if self.advice_count > len(self.categories) * self.advice_per_category:
             raise ValueError("advice_count exceeds the number of candidates")
+        if self.assessment_weights is None:
+            defaults = _default_assessment_weights()
+            self.assessment_weights = {
+                role.id: {
+                    criterion.id: defaults.get(role.id, {}).get(criterion.id, 1.0)
+                    for criterion in self.criteria
+                }
+                for role in self.personas
+            }
+        else:
+            if self.assessment_weights.keys() != {role.id for role in self.personas}:
+                raise ValueError("assessment_weights must include exactly the configured personas")
+            criterion_ids = {item.id for item in self.criteria}
+            if any(weights.keys() != criterion_ids for weights in self.assessment_weights.values()):
+                raise ValueError("Each persona must have a weight for every configured criterion")
         return self
+
+    def assessment_scale(self) -> tuple[float, float]:
+        return min(self.score_min, 0), max(self.score_max, 0)
 
 
 class RuntimeSettings(BaseSettings):
@@ -83,7 +111,7 @@ class RuntimeSettings(BaseSettings):
     graph_max_concurrency: PositiveInt = 4
     session_db: Path = Path("data/pitch.sqlite3")
     api_bearer_token: SecretStr | None = None
-    pitch_config: Path = Path(__file__).with_name("defaults.toml")
+    pitch_config: Path = DEFAULT_POLICY_PATH
     langfuse_public_key: NonEmpty | None = None
     langfuse_secret_key: SecretStr | None = None
     langfuse_base_url: AnyHttpUrl = "https://cloud.langfuse.com"
