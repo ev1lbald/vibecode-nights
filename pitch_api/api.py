@@ -82,6 +82,7 @@ def create_app(settings: RuntimeSettings | None = None, transport: httpx.BaseTra
     @app.get("/api/v1/config", dependencies=auth)
     def public_config(service: Annotated[Sessions, Depends(sessions)]) -> PublicConfig:
         policy = service.policy
+        score_min, score_max = policy.assessment_scale()
         return PublicConfig(
             personas=[Label(id=item.id, label=item.label) for item in policy.personas],
             categories=[Label(id=item.id, label=item.label) for item in policy.categories],
@@ -89,8 +90,8 @@ def create_app(settings: RuntimeSettings | None = None, transport: httpx.BaseTra
             question_count=policy.question_count,
             advice_count=policy.advice_count,
             max_advice_days=policy.max_advice_days,
-            score_min=policy.score_min,
-            score_max=policy.score_max,
+            score_min=score_min,
+            score_max=score_max,
             file_extensions=list(FILE_EXTENSIONS),
             max_files=policy.max_files,
             max_file_bytes=policy.max_file_bytes,

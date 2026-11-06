@@ -1,6 +1,6 @@
 import json
 from operator import or_
-from statistics import mean
+from math import fsum
 from typing import Annotated
 
 from langgraph.graph import END, START, StateGraph
@@ -81,21 +81,25 @@ def _select(raw, candidates: list[dict], count: int, text_field: str) -> list[di
     return selected
 
 
-def _assessment(raw, policy: Policy) -> dict:
+def _assessment(raw, policy: Policy, weights: dict[str, float]) -> dict:
     scores = Scores.model_validate(raw).criteria
     _require_distinct([item.id for item in scores], len(policy.criteria))
     by_id = {item.id: item for item in scores}
-    criteria = [
-        LabeledScore(**by_id[item.id].model_dump(), label=item.label)
-        for item in policy.criteria
-    ]
-    known = [item.score for item in criteria if item.score is not None]
-    if any(not policy.score_min <= score <= policy.score_max for score in known):
-        raise ValueError("Score outside configured scale")
+    criteria = []
+    weighted_scores = []
+    total_weight = fsum(weights.values())
+    for item in policy.criteria:
+        entry = by_id[item.id]
+        score = entry.score if entry.score is not None else 0.0
+        if score != 0 and not policy.score_min <= score <= policy.score_max:
+            raise ValueError("Score outside configured scale")
+        criteria.append(LabeledScore(id=item.id, label=item.label, score=score, rationale=entry.rationale))
+        weighted_scores.append(score * (weights[item.id] / total_weight))
+    score_min, score_max = policy.assessment_scale()
     return Assessment(
-        score=mean(known) if known else None,
-        score_min=policy.score_min,
-        score_max=policy.score_max,
+        score=fsum(weighted_scores),
+        score_min=score_min,
+        score_max=score_max,
         criteria=criteria,
     ).model_dump()
 
@@ -145,13 +149,19 @@ def _await_answers(state: State) -> dict:
 def build_graph(model: ChatModel, checkpointer):
     def ask(stage: str, policy: Policy, schema: type[Output], context: dict, validate):
         structure = json.dumps(schema.model_json_schema(), ensure_ascii=False)
-        instructions = "\n".join((
+        instructions = [
             policy.prompts.shared,
             getattr(policy.prompts, stage),
             f"Язык текстовых полей: {policy.output_language}.",
             f"Схема ответа: {structure}",
-        ))
-        return model.ask(stage, instructions, context, validate)
+        ]
+        if stage == "assessment":
+            instructions.append(
+                "Обязательное правило оценки. Если по критерию нет достаточных данных, "
+                "score равен числу 0, даже если другие инструкции предлагают null или низкий балл. "
+                "Например, если анализа рынка и конкурентов нет, поставь 0 и объясни пробел."
+            )
+        return model.ask(stage, "\n".join(instructions), context, validate)
 
     def inspect(state: State):
         policy = Policy.model_validate(state["policy"])
@@ -197,13 +207,14 @@ def build_graph(model: ChatModel, checkpointer):
 
     def assess_project(state: State):
         policy = Policy.model_validate(state["policy"])
+        weights = policy.assessment_weights[state["persona"]]
         context = {
             **_review_context(state, policy),
-            "criteria": [item.model_dump() for item in policy.criteria],
+            "criteria": [{**item.model_dump(), "weight": weights[item.id]} for item in policy.criteria],
             "score_min": policy.score_min,
             "score_max": policy.score_max,
         }
-        assessment = ask("assessment", policy, Scores, context, lambda raw: _assessment(raw, policy))
+        assessment = ask("assessment", policy, Scores, context, lambda raw: _assessment(raw, policy, weights))
         return {"assessment": assessment}
 
     def distribute_advice(state: State):

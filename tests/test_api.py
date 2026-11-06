@@ -6,12 +6,14 @@ from uuid import uuid4
 from docx import Document
 from fastapi.testclient import TestClient
 import httpx
+import pytest
 from pptx import Presentation
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from pitch_api.api import create_app
 from pitch_api.config import RuntimeSettings
+from pitch_api.workflow import _assessment
 
 
 class Provider:
@@ -169,8 +171,8 @@ def test_session_restart_and_idempotent_submissions(tmp_path):
         final = response.json()
         assert final["status"] == "completed"
         assert final["questions"] == initial["questions"]
-        assert final["assessment"]["score"] == 5
-        assert final["assessment"]["criteria"][0]["score"] is None
+        assert final["assessment"]["score"] == pytest.approx(4.12)
+        assert final["assessment"]["criteria"][0]["score"] == 0
         assert len(final["advice"]) == 3
         assert all(item["estimated_days"] == 2 for item in final["advice"])
         assert client.get(url).json() == final
@@ -186,7 +188,10 @@ def test_session_restart_and_idempotent_submissions(tmp_path):
 
     workers = [data for stage, data in provider.calls if stage == "category_advice"]
     assert len(workers) == 7
-    assert all(len(item["questions_and_answers"]) == 5 and item["assessment"]["score"] == 5 for item in workers)
+    assert all(
+        len(item["questions_and_answers"]) == 5 and item["assessment"]["score"] == pytest.approx(4.12)
+        for item in workers
+    )
     chief, = [data for stage, data in provider.calls if stage == "select_advice"]
     assert len(chief["candidates"]) == 21
     assert len(chief["question_candidates"]) == 75
@@ -297,3 +302,30 @@ def test_counts_are_configurable_and_saved_per_session(tmp_path):
         assert len(response.json()["advice"]) == 2
     chief, = [data for stage, data in provider.calls if stage == "select_advice"]
     assert len(chief["candidates"]) == 7
+
+
+def test_assessment_weights_by_persona_and_missing_scores(tmp_path):
+    policy = runtime(tmp_path).load_policy()
+    raw = {"criteria": [
+        {"id": criterion.id, "score": index or None, "rationale": "Пояснение"}
+        for index, criterion in enumerate(policy.criteria)
+    ]}
+    expected_scores = {
+        "business_angel": 4.28,
+        "corporation": 4.12,
+        "grant_fund": 4.55,
+        "venture_fund": 4.46,
+    }
+    for role, expected in expected_scores.items():
+        weights = policy.assessment_weights[role]
+        assert sum(weights.values()) == pytest.approx(10)
+        assert _assessment(raw, policy, weights)["score"] == pytest.approx(expected)
+
+    for criterion in raw["criteria"]:
+        criterion["score"] = None
+    result = _assessment(raw, policy, policy.assessment_weights["grant_fund"])
+    assert result["score"] == 0
+    assert all(item["score"] == 0 for item in result["criteria"])
+
+    legacy = type(policy).model_validate(policy.model_dump(exclude={"assessment_weights"}))
+    assert legacy.assessment_weights == policy.assessment_weights
