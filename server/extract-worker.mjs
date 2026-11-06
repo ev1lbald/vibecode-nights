@@ -8,12 +8,13 @@ try {
   let text = "";
   if (ext === ".pdf") {
     const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const pdf = await getDocument({
+    const task = getDocument({
       data: new Uint8Array(bytes),
       isEvalSupported: false,
       useSystemFonts: false,
       disableFontFace: true,
-    }).promise;
+    });
+    const pdf = await task.promise;
     if (pdf.numPages > 200) throw new Error("too many pages");
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
@@ -22,7 +23,7 @@ try {
         content.items.map((x) => ("str" in x ? x.str : "")).join(" ") + "\n";
       if (text.length > 50000) throw new Error("too much text");
     }
-    await pdf.destroy();
+    await task.destroy();
   } else {
     let expanded = 0;
     const entries = unzipSync(new Uint8Array(bytes), {

@@ -21,7 +21,7 @@ const createSchema = z.object({
     "corporation",
     "grant_fund",
   ]),
-  pitch: z.string().max(50000).default(""),
+  pitch: z.string().default(""),
   title: z.string().trim().min(1).max(120),
   deadline: z
     .enum(["Завтра", "Через 2–3 дня", "Через неделю", "Пока не знаю"])
@@ -96,17 +96,22 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
     next();
   });
   app.use(express.json({ limit: "128kb" }));
-  const upload = multer({
+  const getConfig = async (): Promise<Config> => live ? { ...await upstream("/api/v1/config"), mode: "live" } : stubConfig;
+  const upload: express.RequestHandler = async (req, res, next) => {
+    try {
+    const config = await getConfig();
+    res.locals.config = config;
+    multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: stubConfig.max_file_bytes,
-      files: stubConfig.max_files,
+      fileSize: config.max_file_bytes,
+      files: config.max_files,
       fields: 8,
-      fieldSize: 200000,
+      fieldSize: Math.max(200000, config.max_input_chars * 4),
     },
     fileFilter: (_req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase();
-      if (!stubConfig.file_extensions.includes(ext))
+      if (!config.file_extensions.includes(ext))
         return cb(
           new ApiError(
             415,
@@ -116,7 +121,9 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
         );
       cb(null, true);
     },
-  });
+    }).array("files")(req, res, next);
+    } catch (error) { next(error); }
+  };
   const get = (id: string, owner: string) => {
     uuid.parse(id);
     const row = db.get(id, owner);
@@ -143,7 +150,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
     }
   };
   app.get("/api/v1/config", async (_req, res) => {
-    const config: Config = live ? await upstream("/api/v1/config") : stubConfig;
+    const config = await getConfig();
     res.json({ ...config, mode: live ? "live" : "stub" });
   });
   app.get("/api/app/history", (_req, res) =>
@@ -180,9 +187,10 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
     }
     res.json(row.session);
   });
-  app.put("/api/v1/sessions/:id", upload.array("files"), async (req, res) => {
+  app.put("/api/v1/sessions/:id", upload, async (req, res) => {
     const id = uuid.parse(req.params.id);
     const input = createSchema.parse(req.body);
+    const config: Config = res.locals.config;
     const files = (req.files as Express.Multer.File[]) ?? [];
     if (!input.pitch.trim() && !files.length)
       throw new ApiError(
@@ -222,11 +230,11 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
           "no_text",
           "В файлах не найден текст. Для сканов добавь описание вручную или загрузи файл с текстовым слоем.",
         );
-      if (input.pitch.length + extracted.length > stubConfig.max_input_chars)
+      if (input.pitch.length + extracted.length > config.max_input_chars)
         throw new ApiError(
           413,
           "too_much_text",
-          "В материалах слишком много текста. Оставь до 50 000 символов.",
+          `В материалах слишком много текста. Оставь до ${config.max_input_chars} символов.`,
         );
       const now = new Date().toISOString();
       const session: Session = previous?.session ?? {
@@ -280,6 +288,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
     const id = uuid.parse(req.params.id);
     await locked(id, async () => {
       const row = get(id, res.locals.owner);
+      const config = await getConfig();
       const session = row.session;
       const { answers } = z
         .object({
@@ -291,7 +300,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
                   .string()
                   .trim()
                   .min(1)
-                  .max(stubConfig.max_answer_chars),
+                  .max(config.max_answer_chars),
               }),
             )
             .max(50),
@@ -387,7 +396,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
       } else if (err instanceof multer.MulterError) {
         status = 413;
         code = "file_limit";
-        message = "Можно загрузить до 5 файлов, каждый до 10 МБ.";
+        message = `Можно загрузить до ${res.locals.config?.max_files ?? 5} файлов, каждый до ${Math.round((res.locals.config?.max_file_bytes ?? 10485760)/1048576)} МБ.`;
       } else if (err?.type === "entity.too.large") {
         status = 413;
         code = "body_limit";
