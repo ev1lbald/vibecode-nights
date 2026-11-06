@@ -1,0 +1,18 @@
+services:
+  web:
+    build: .
+    image: vibecode-nights:local
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      DATA_DIR: /app/data
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      AGENT_API_URL: ${AGENT_API_URL:-}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - sessions:/app/data
+volumes:
+  sessions:
