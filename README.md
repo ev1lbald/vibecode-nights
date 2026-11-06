@@ -69,12 +69,12 @@ API для тренировки инвестиционного питча. По�
 
 ### Роли критика
 
-| ID | Роль | Приоритеты |
-| --- | --- | --- |
-| `business_angel` | Бизнес-ангел | Мотивация и вовлечённость команды, потенциал возврата вложений |
-| `corporation` | Корпорация | Внутренний заказчик, интеграция, риски для данных и репутации |
-| `grant_fund` | Грантовый фонд | Измеримый результат, общественная польза, смета, сроки и отчётность |
-| `venture_fund` | Венчурный фонд | Ёмкость рынка, масштабирование, метрики и следующие раунды |
+| ID               | Роль           | Приоритеты                                                          |
+| ---------------- | -------------- | ------------------------------------------------------------------- |
+| `business_angel` | Бизнес-ангел   | Мотивация и вовлечённость команды, потенциал возврата вложений      |
+| `corporation`    | Корпорация     | Внутренний заказчик, интеграция, риски для данных и репутации       |
+| `grant_fund`     | Грантовый фонд | Измеримый результат, общественная польза, смета, сроки и отчётность |
+| `venture_fund`   | Венчурный фонд | Ёмкость рынка, масштабирование, метрики и следующие раунды          |
 
 Вопросы и советы охватывают рецессию, копирование конкурентом, юридические риски, плохие отзывы, ценовую войну, отсутствие клиентов и потерю критической зависимости. [Источник категорий](https://github.com/alexyc9381/crash-test-skill/blob/main/skills/crash-test/SKILL.md#2-seven-crash-dummies-alone)
 
@@ -84,26 +84,26 @@ API для тренировки инвестиционного питча. По�
 
 В рекомендуемой схеме браузер обращается к серверу сайта, а сервер сайта — к этому API. Если настроен сервисный токен, сервер сайта передаёт `Authorization: Bearer <token>` во всех запросах к `/api/v1/*` и хранит соответствие UUID сессии пользователю. Передавайте UUID только владельцу сессии. Без сервисного токена API предназначен для локального запуска.
 
-| Метод и путь | Запрос и результат |
-| --- | --- |
-| `GET /api/v1/config` | Роли `personas` с полями `id` и `label`, категории `categories` и критерии `criteria` с такими же полями, число вопросов `question_count`, число советов `advice_count`, предел срока `max_advice_days`, шкала `score_min` / `score_max`, расширения `file_extensions` и пределы `max_files`, `max_file_bytes`, `max_input_chars`, `max_answer_chars`. |
-| `PUT /api/v1/sessions/{session_id}` | Создание сессии. Сайт создаёт UUID и отправляет `multipart/form-data` с обязательным `persona`, необязательным `pitch` и повторяющимся полем `files`. Нужен непустой питч или хотя бы один файл. Запрос возвращает сессию с вопросами. Повтор с тем же UUID и теми же материалами возвращает состояние существующей сессии или продолжает прерванную генерацию. |
-| `GET /api/v1/sessions/{session_id}` | Получение последнего сохранённого состояния по UUID, в том числе после перезапуска API. |
-| `PUT /api/v1/sessions/{session_id}/answers` | Отправка всех ответов одним JSON-запросом вида `{"answers":[{"question_id":"q-1","answer":"Ответ на вопрос"}]}`. Включите каждый полученный ID ровно один раз и заполните каждый ответ. Повтор той же отправки возвращает готовый результат или продолжает прерванный анализ. |
-| `GET /healthz` | Проверка доступности процесса. |
-| `GET /docs` | Swagger UI. Схема доступна по `/openapi.json`. |
+| Метод и путь                                | Запрос и результат                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/config`                        | Роли `personas` с полями `id` и `label`, категории `categories` и критерии `criteria` с такими же полями, число вопросов `question_count`, число советов `advice_count`, предел срока `max_advice_days`, шкала `score_min` / `score_max`, расширения `file_extensions` и пределы `max_files`, `max_file_bytes`, `max_input_chars`, `max_answer_chars`.          |
+| `PUT /api/v1/sessions/{session_id}`         | Создание сессии. Сайт создаёт UUID и отправляет `multipart/form-data` с обязательным `persona`, необязательным `pitch` и повторяющимся полем `files`. Нужен непустой питч или хотя бы один файл. Запрос возвращает сессию с вопросами. Повтор с тем же UUID и теми же материалами возвращает состояние существующей сессии или продолжает прерванную генерацию. |
+| `GET /api/v1/sessions/{session_id}`         | Получение последнего сохранённого состояния по UUID, в том числе после перезапуска API.                                                                                                                                                                                                                                                                         |
+| `PUT /api/v1/sessions/{session_id}/answers` | Отправка всех ответов одним JSON-запросом вида `{"answers":[{"question_id":"q-1","answer":"Ответ на вопрос"}]}`. Включите каждый полученный ID ровно один раз и заполните каждый ответ. Повтор той же отправки возвращает готовый результат или продолжает прерванный анализ.                                                                                   |
+| `GET /healthz`                              | Проверка доступности процесса.                                                                                                                                                                                                                                                                                                                                  |
+| `GET /docs`                                 | Swagger UI. Схема доступна по `/openapi.json`.                                                                                                                                                                                                                                                                                                                  |
 
 Оба `PUT` ждут завершения своей стадии. На сайте показывайте ожидание, а при сетевом сбое запрашивайте состояние по UUID. Если стадия осталась незавершённой, повторите соответствующий `PUT` с теми же данными. Одновременная запись в ту же сессию возвращает `409`.
 
 ### Объект сессии
 
-| Поле | Формат |
-| --- | --- |
-| `id`, `persona` | UUID сессии и ID выбранной роли |
-| `status` | `generating_questions`, `awaiting_answers`, `analyzing` или `completed` |
-| `questions` | Массив `{id, text, category_id}` в порядке показа. Для общих вопросов `category_id` равен `null`. |
-| `assessment` | До окончания анализа `null`. Затем `{score, score_min, score_max, criteria}`, где каждый элемент `criteria` содержит `{id, label, score, rationale}`. `score` может быть `null`. |
-| `advice` | Массив по убыванию приоритета. Каждый элемент содержит `{category_id, action, expected_result, estimated_days}`. |
+| Поле            | Формат                                                                                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`, `persona` | UUID сессии и ID выбранной роли                                                                                                                                                  |
+| `status`        | `generating_questions`, `awaiting_answers`, `analyzing` или `completed`                                                                                                          |
+| `questions`     | Массив `{id, text, category_id}` в порядке показа. Для общих вопросов `category_id` равен `null`.                                                                                |
+| `assessment`    | До окончания анализа `null`. Затем `{score, score_min, score_max, criteria}`, где каждый элемент `criteria` содержит `{id, label, score, rationale}`. `score` может быть `null`. |
+| `advice`        | Массив по убыванию приоритета. Каждый элемент содержит `{category_id, action, expected_result, estimated_days}`.                                                                 |
 
 При `awaiting_answers` покажите поля по массиву `questions`, сохраняя их ID. При `completed` отобразите общий балл, разбивку по критериям и советы. Используйте фактическую длину массивов. Количество элементов, роли, критерии, шкала и лимиты задаются на сервере.
 
@@ -112,26 +112,26 @@ API для тренировки инвестиционного питча. По�
 ### Пример запроса с сервера сайта
 
 ```js
-const sessionId = crypto.randomUUID()
-const sessionUrl = `${apiBaseUrl}/api/v1/sessions/${sessionId}`
-const auth = { Authorization: `Bearer ${serviceToken}` }
-const form = new FormData()
-form.set("persona", "business_angel")
-form.set("pitch", pitchText)
-for (const file of attachments) form.append("files", file)
+const sessionId = crypto.randomUUID();
+const sessionUrl = `${apiBaseUrl}/api/v1/sessions/${sessionId}`;
+const auth = { Authorization: `Bearer ${serviceToken}` };
+const form = new FormData();
+form.set("persona", "business_angel");
+form.set("pitch", pitchText);
+for (const file of attachments) form.append("files", file);
 
 const questionsResponse = await fetch(sessionUrl, {
   method: "PUT",
   headers: auth,
   body: form,
-})
+});
 // Проверьте questionsResponse.ok. Сохраните UUID и покажите questions.
 
 const resultResponse = await fetch(`${sessionUrl}/answers`, {
   method: "PUT",
   headers: { ...auth, "Content-Type": "application/json" },
   body: JSON.stringify({ answers: collectedAnswers }),
-})
+});
 // Проверьте resultResponse.ok. При completed отобразите assessment и advice.
 ```
 

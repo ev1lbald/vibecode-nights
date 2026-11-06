@@ -58,14 +58,12 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
       standardHeaders: "draft-8",
       legacyHeaders: false,
       handler: (_req, res) =>
-        res
-          .status(429)
-          .json({
-            detail: {
-              code: "rate_limit",
-              message: "Слишком много запросов. Подожди минуту.",
-            },
-          }),
+        res.status(429).json({
+          detail: {
+            code: "rate_limit",
+            message: "Слишком много запросов. Подожди минуту.",
+          },
+        }),
     }),
   );
   app.use("/api", (req, res, next) => {
@@ -96,33 +94,36 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
     next();
   });
   app.use(express.json({ limit: "128kb" }));
-  const getConfig = async (): Promise<Config> => live ? { ...await upstream("/api/v1/config"), mode: "live" } : stubConfig;
+  const getConfig = async (): Promise<Config> =>
+    live ? { ...(await upstream("/api/v1/config")), mode: "live" } : stubConfig;
   const upload: express.RequestHandler = async (req, res, next) => {
     try {
-    const config = await getConfig();
-    res.locals.config = config;
-    multer({
-    storage: multer.memoryStorage(),
-    limits: {
-      fileSize: config.max_file_bytes,
-      files: config.max_files,
-      fields: 8,
-      fieldSize: Math.max(200000, config.max_input_chars * 4),
-    },
-    fileFilter: (_req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      if (!config.file_extensions.includes(ext))
-        return cb(
-          new ApiError(
-            415,
-            "unsupported_file",
-            "Поддерживаются TXT, MD, PDF, PPTX и DOCX.",
-          ),
-        );
-      cb(null, true);
-    },
-    }).array("files")(req, res, next);
-    } catch (error) { next(error); }
+      const config = await getConfig();
+      res.locals.config = config;
+      multer({
+        storage: multer.memoryStorage(),
+        limits: {
+          fileSize: config.max_file_bytes,
+          files: config.max_files,
+          fields: 8,
+          fieldSize: Math.max(200000, config.max_input_chars * 4),
+        },
+        fileFilter: (_req, file, cb) => {
+          const ext = path.extname(file.originalname).toLowerCase();
+          if (!config.file_extensions.includes(ext))
+            return cb(
+              new ApiError(
+                415,
+                "unsupported_file",
+                "Поддерживаются TXT, MD, PDF, PPTX и DOCX.",
+              ),
+            );
+          cb(null, true);
+        },
+      }).array("files")(req, res, next);
+    } catch (error) {
+      next(error);
+    }
   };
   const get = (id: string, owner: string) => {
     uuid.parse(id);
@@ -155,19 +156,17 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
   });
   app.get("/api/app/history", (_req, res) =>
     res.json(
-      db
-        .list(res.locals.owner)
-        .map((s) => ({
-          id: s.id,
-          title: s.title,
-          persona: s.persona,
-          status: s.status,
-          created_at: s.created_at,
-          updated_at: s.updated_at,
-          score: s.assessment?.score ?? null,
-          mode: s.mode,
-          answer_count: s.answers.length,
-        })),
+      db.list(res.locals.owner).map((s) => ({
+        id: s.id,
+        title: s.title,
+        persona: s.persona,
+        status: s.status,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        score: s.assessment?.score ?? null,
+        mode: s.mode,
+        answer_count: s.answers.length,
+      })),
     ),
   );
   app.get("/api/v1/sessions/:id", async (req, res) => {
@@ -296,11 +295,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
             .array(
               z.object({
                 question_id: z.string(),
-                answer: z
-                  .string()
-                  .trim()
-                  .min(1)
-                  .max(config.max_answer_chars),
+                answer: z.string().trim().min(1).max(config.max_answer_chars),
               }),
             )
             .max(50),
@@ -396,7 +391,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
       } else if (err instanceof multer.MulterError) {
         status = 413;
         code = "file_limit";
-        message = `Можно загрузить до ${res.locals.config?.max_files ?? 5} файлов, каждый до ${Math.round((res.locals.config?.max_file_bytes ?? 10485760)/1048576)} МБ.`;
+        message = `Можно загрузить до ${res.locals.config?.max_files ?? 5} файлов, каждый до ${Math.round((res.locals.config?.max_file_bytes ?? 10485760) / 1048576)} МБ.`;
       } else if (err?.type === "entity.too.large") {
         status = 413;
         code = "body_limit";
