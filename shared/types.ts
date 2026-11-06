@@ -35,6 +35,8 @@ export type Session = {
   pitch: string;
   files: string[];
   mode: "stub" | "live";
+  stage_error?: string;
+  max_answer_chars?: number;
 };
 export type Config = {
   personas: { id: PersonaId; label: string }[];

@@ -113,7 +113,9 @@ export async function upstream(
     response = await fetch(url + path, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(
+        path.endsWith("/config") || init.method !== "PUT" ? 15000 : 900000,
+      ),
     });
   } catch {
     throw new ApiError(

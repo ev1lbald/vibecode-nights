@@ -179,7 +179,7 @@ function App() {
         ) : path === "/history" ? (
           <History />
         ) : path === "/how" ? (
-          <How />
+          <How config={config} />
         ) : (
           <div className="page">
             <h1>Эта страница потерялась.</h1>
@@ -224,26 +224,28 @@ function Home({ config }: { config: Config }) {
         </div>
       </section>
       <section className="investor-grid" aria-label="Выбери инвестора">
-        {config.personas.map(({ id }) => {
-          const p = personas[id];
-          if (!p) return null;
-          return (
-            <a
-              href={`#/setup?persona=${id}`}
-              className="investor-card"
-              style={{ background: p.color }}
-              key={id}
-            >
-              <div className="card-heading">
-                <h2>{p.label}</h2>
-                <span aria-hidden="true">↗</span>
-              </div>
-              <p className="card-description">{p.description}</p>
-              <Mascot persona={id} />
-              <p className="card-quote">{p.quote}</p>
-            </a>
-          );
-        })}
+        {Object.values(personas)
+          .filter((p) => config.personas.some((allowed) => allowed.id === p.id))
+          .map(({ id }) => {
+            const p = personas[id];
+            if (!p) return null;
+            return (
+              <a
+                href={`#/setup?persona=${id}`}
+                className="investor-card"
+                style={{ background: p.color }}
+                key={id}
+              >
+                <div className="card-heading">
+                  <h2>{p.label}</h2>
+                  <span aria-hidden="true">↗</span>
+                </div>
+                <p className="card-description">{p.description}</p>
+                <Mascot persona={id} />
+                <p className="card-quote">{p.quote}</p>
+              </a>
+            );
+          })}
       </section>
     </div>
   );
@@ -316,7 +318,12 @@ function Setup({ persona, config }: { persona: PersonaId; config: Config }) {
       });
       go(`/session/${id}`);
     } catch (e) {
-      setError((e as Error).message);
+      try {
+        await api<Session>(`/api/v1/sessions/${id}`);
+        go(`/session/${id}`);
+      } catch {
+        setError((e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -537,6 +544,50 @@ function Training({ id, config }: { id: string; config: Config }) {
   useEffect(() => {
     setStorageError(!save(`vibe-answers-${id}`, drafts));
   }, [id, drafts]);
+  useEffect(() => {
+    if (
+      !session ||
+      session.stage_error ||
+      !["generating_questions", "analyzing"].includes(session.status)
+    )
+      return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const updated = await api<Session>(`/api/v1/sessions/${id}`);
+        if (stopped) return;
+        setSession(updated);
+        setError("");
+        if (
+          updated.stage_error ||
+          !["generating_questions", "analyzing"].includes(updated.status)
+        )
+          return;
+      } catch (e) {
+        if (!stopped) setError((e as Error).message);
+      }
+      if (!stopped) timer = setTimeout(poll, 2500);
+    };
+    timer = setTimeout(poll, 1500);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [id, session?.status, session?.stage_error]);
+  async function retryStage() {
+    setBusy(true);
+    setError("");
+    try {
+      setSession(
+        await api<Session>(`/api/app/sessions/${id}/retry`, { method: "POST" }),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submitAll(next: Record<string, string>) {
     if (!session) return;
     setBusy(true);
@@ -582,19 +633,62 @@ function Training({ id, config }: { id: string; config: Config }) {
     );
   if (session.status === "completed") return <Results session={session} />;
   if (
-    session.status === "generating_questions" ||
+    ["generating_questions", "analyzing"].includes(session.status) ||
     session.questions.length === 0
-  )
+  ) {
+    const analyzing = session.status === "analyzing";
     return (
-      <div className="page">
-        <Busy text="Вопросы ещё готовятся" />
-        <ErrorBox message={error} />
-        <Button onClick={load}>Проверить готовность</Button>
-        <a className="back" href="#/history">
-          Вернуться позже
-        </a>
+      <div className="page processing">
+        <Badge color="var(--green)">
+          {analyzing ? "Пять ответов получены" : "Материалы получены"}
+        </Badge>
+        <h1>
+          {session.stage_error
+            ? "Нужно повторить этот этап."
+            : analyzing
+              ? "Инвестор разбирает проект."
+              : "Готовим вопросы по твоему проекту."}
+        </h1>
+        <p className="lead">
+          {analyzing
+            ? "Оцениваем проект по критериям и выбираем три конкретных действия."
+            : "Изучаем материалы и выбираем пять самых важных вопросов."}{" "}
+          Это может занять несколько минут.
+        </p>
+        <div
+          className="processing-card"
+          style={{ background: personas[session.persona].color }}
+        >
+          <Mascot persona={session.persona} />
+          <div>
+            <h2>{session.title}</h2>
+            <p>{personas[session.persona].label}</p>
+            {!session.stage_error && (
+              <Busy
+                text={analyzing ? "Анализируем ответы…" : "Изучаем проект…"}
+              />
+            )}
+          </div>
+        </div>
+        <ErrorBox message={session.stage_error || error} />
+        <div className="actions">
+          {session.stage_error && (
+            <Button disabled={busy} onClick={retryStage}>
+              {busy ? "Запускаем…" : "Повторить этап ↗"}
+            </Button>
+          )}
+          <Button secondary onClick={load}>
+            Проверить состояние
+          </Button>
+          <a href="#/history">Вернуться к моим тренировкам</a>
+        </div>
+        <p className="muted">
+          Материалы и отправленные ответы сохранены. Можно закрыть страницу и
+          вернуться позже.
+        </p>
       </div>
     );
+  }
   const p = personas[session.persona],
     q = session.questions[index],
     color = p.color;
@@ -687,7 +781,7 @@ function Training({ id, config }: { id: string; config: Config }) {
             <textarea
               id="answer"
               disabled={busy}
-              maxLength={config.max_answer_chars}
+              maxLength={session.max_answer_chars ?? config.max_answer_chars}
               value={drafts[q.id] ?? ""}
               onChange={(e) => setDrafts({ ...drafts, [q.id]: e.target.value })}
               placeholder="Напиши свой ответ…"
@@ -702,7 +796,8 @@ function Training({ id, config }: { id: string; config: Config }) {
                 Пока не знаю
               </button>
               <small className="muted answer-count">
-                {(drafts[q.id] ?? "").length} / {config.max_answer_chars}
+                {(drafts[q.id] ?? "").length} /{" "}
+                {session.max_answer_chars ?? config.max_answer_chars}
               </small>
               <Button disabled={busy || !drafts[q.id]?.trim()} type="submit">
                 {busy ? (
@@ -727,7 +822,7 @@ function Training({ id, config }: { id: string; config: Config }) {
           />
           <div className="conversation-footer">
             <small className="muted">
-              {config.mode === "stub"
+              {session.mode === "stub"
                 ? "Демо-тренировка · ответы сохраняются, оценка агента пока недоступна"
                 : "Ответы сохранятся на сервере после завершения раунда."}
             </small>
@@ -910,9 +1005,15 @@ function Results({ session }: { session: Session }) {
             </>
           )}
           <hr />
-          <p>Нет данных — не значит плохой результат.</p>
+          <p>
+            {session.mode === "live"
+              ? "Оценка учитывает приоритеты выбранного инвестора."
+              : "В деморежиме баллы не выставляются."}
+          </p>
           <p className="muted">
-            Критерии без оценки не включаются в общий балл.
+            {session.mode === "live"
+              ? "Каждый критерий имеет свой вес. Если данных недостаточно, агент ставит 0 и объясняет, что нужно подтвердить."
+              : "Результат появится после прохождения новой тренировки с подключёнными агентами."}
           </p>
           <details>
             <summary>Вопросы и мои ответы</summary>
@@ -1051,7 +1152,7 @@ function History() {
     </div>
   );
 }
-function How() {
+function How({ config }: { config: Config }) {
   return (
     <div className="page how">
       <Badge color="var(--green)">10 минут до большей уверенности</Badge>
@@ -1096,14 +1197,15 @@ function How() {
       <section className="how-rules">
         <h2>Честные правила</h2>
         <p>
-          Оценка — среднее критериев, для которых есть данные. «Нет данных» не
-          превращается в ноль. Инвестор проверяет аргументы, а не личные
-          качества. Факты о рынке и конкурентах нужно подтверждать.
+          Оценка учитывает веса критериев для выбранного инвестора. Если данных
+          недостаточно, критерий получает 0 с объяснением пробела. Инвестор
+          проверяет аргументы, а не личные качества. Факты о рынке и конкурентах
+          нужно подтверждать.
         </p>
         <p className="muted">
-          Сейчас доступен демонстрационный режим: сценарий работает целиком, но
-          агенты ещё не подключены. В нём нет персональных баллов, а советы —
-          примеры подготовки.
+          {config.mode === "stub"
+            ? "Сейчас доступен демонстрационный режим: сценарий работает целиком, но агенты ещё не подключены. В нём нет персональных баллов, а советы — примеры подготовки."
+            : "Вопросы, оценка и советы формируются по твоим материалам и ответам. Отделяй подтверждённые факты от гипотез."}
         </p>
         <Button onClick={() => go("/")}>Выбрать собеседника ↗</Button>
       </section>

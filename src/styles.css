@@ -1334,3 +1334,62 @@ hr {
     margin-top: 28px;
   }
 }
+
+.processing h1 {
+  margin-top: 24px;
+  max-width: 950px;
+}
+.processing .lead {
+  max-width: 850px;
+}
+.processing-card {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin: 32px 0;
+  padding: 24px;
+  border-radius: 24px;
+  max-width: 850px;
+}
+.processing-card .mascot {
+  width: 180px;
+  flex-shrink: 0;
+}
+.processing-card .mascot img {
+  width: 180px;
+  height: 180px;
+}
+.processing-card h2 {
+  overflow-wrap: anywhere;
+}
+.processing-card p {
+  margin-top: 12px;
+}
+.processing-card .busy {
+  min-height: 0;
+  justify-content: flex-start;
+  margin-top: 24px;
+}
+.processing > .muted {
+  margin-top: 24px;
+  font-size: 14px;
+}
+@media (max-width: 760px) {
+  .processing-card {
+    gap: 20px;
+    padding: 20px;
+  }
+  .processing-card .mascot {
+    width: 100px;
+  }
+  .processing-card .mascot img {
+    width: 100px;
+    height: 100px;
+  }
+  .processing-card h2 {
+    font-size: 20px;
+  }
+  .processing-card .busy {
+    font-size: 14px;
+  }
+}

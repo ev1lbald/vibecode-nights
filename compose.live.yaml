@@ -1,0 +1,23 @@
+# docker compose -f compose.yaml -f compose.live.yaml up -d --build
+# Store provider credentials in ignored .env.agents, shared token in .env.
+services:
+  web:
+    environment:
+      AGENT_API_URL: http://agents:8000
+      AGENT_API_TOKEN: ${API_BEARER_TOKEN:?Set the shared service token in .env}
+    depends_on:
+      agents:
+        condition: service_healthy
+  agents:
+    build:
+      context: .
+      dockerfile: Dockerfile.agents
+    restart: unless-stopped
+    env_file: .env.agents
+    environment:
+      SESSION_DB: /app/data/pitch.sqlite3
+      API_BEARER_TOKEN: ${API_BEARER_TOKEN:?Set the shared service token in .env}
+    volumes:
+      - agent_sessions:/app/data
+volumes:
+  agent_sessions:

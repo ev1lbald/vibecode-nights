@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { z } from "zod";
 import { openDb } from "./db";
 import { stubConfig, personas } from "../shared/catalog";
@@ -150,6 +151,76 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
       locks.delete(id);
     }
   };
+  const attachmentsPath = (id: string) =>
+    path.join(dataDir, "pending", uuid.parse(id));
+  const persistAttachments = (id: string, files: Express.Multer.File[]) => {
+    if (!files.length) return;
+    mkdirSync(attachmentsPath(id), { recursive: true, mode: 0o700 });
+    files.forEach((file, index) =>
+      writeFileSync(
+        path.join(attachmentsPath(id), String(index)),
+        file.buffer,
+        { mode: 0o600 },
+      ),
+    );
+  };
+  const clearAttachments = (id: string) =>
+    rmSync(attachmentsPath(id), { recursive: true, force: true });
+  const runStage = async (
+    session: Session,
+    owner: string,
+    fingerprint: string,
+  ) => {
+    session.stage_error = undefined;
+    session.updated_at = new Date().toISOString();
+    db.put(session, owner, fingerprint);
+    try {
+      let result;
+      if (session.status === "generating_questions") {
+        const form = new FormData();
+        form.set("persona", session.persona);
+        form.set("pitch", session.pitch);
+        session.files.forEach((name, index) =>
+          form.append(
+            "files",
+            new Blob([
+              new Uint8Array(
+                readFileSync(
+                  path.join(attachmentsPath(session.id), String(index)),
+                ),
+              ),
+            ]),
+            name,
+          ),
+        );
+        result = await upstream(`/api/v1/sessions/${session.id}`, {
+          method: "PUT",
+          body: form,
+        });
+      } else {
+        result = await upstream(`/api/v1/sessions/${session.id}/answers`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answers: session.answers }),
+        });
+      }
+      Object.assign(session, {
+        status: result.status,
+        questions: result.questions,
+        assessment: result.assessment,
+        advice: result.advice,
+      });
+      if (session.status !== "generating_questions")
+        clearAttachments(session.id);
+    } catch (error) {
+      session.stage_error =
+        error instanceof ApiError
+          ? error.message
+          : "Не удалось обработать материалы. Попробуй повторить этап.";
+    }
+    session.updated_at = new Date().toISOString();
+    db.put(session, owner, fingerprint);
+  };
   app.get("/api/v1/config", async (_req, res) => {
     const config = await getConfig();
     res.json({ ...config, mode: live ? "live" : "stub" });
@@ -172,16 +243,30 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
   app.get("/api/v1/sessions/:id", async (req, res) => {
     const row = get(req.params.id, res.locals.owner);
     if (
-      live &&
+      row.session.mode === "live" &&
+      !locks.has(row.session.id) &&
       ["generating_questions", "analyzing"].includes(row.session.status)
     ) {
-      const remote = await upstream(`/api/v1/sessions/${row.session.id}`);
-      Object.assign(row.session, {
-        status: remote.status,
-        questions: remote.questions,
-        assessment: remote.assessment,
-        advice: remote.advice,
-      });
+      try {
+        const remote = await upstream(`/api/v1/sessions/${row.session.id}`);
+        Object.assign(row.session, {
+          status: remote.status,
+          questions: remote.questions,
+          assessment: remote.assessment,
+          advice: remote.advice,
+        });
+        if (["awaiting_answers", "completed"].includes(remote.status)) {
+          row.session.stage_error = undefined;
+          clearAttachments(row.session.id);
+        } else if (!row.session.stage_error)
+          row.session.stage_error =
+            "Обработка была прервана. Материалы сохранены — можно повторить этап.";
+      } catch (error) {
+        row.session.stage_error ||=
+          error instanceof ApiError
+            ? error.message
+            : "Сервис временно недоступен.";
+      }
       db.put(row.session, res.locals.owner, row.fingerprint);
     }
     res.json(row.session);
@@ -251,43 +336,28 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
         created_at: now,
         updated_at: now,
         mode: live ? "live" : "stub",
+        max_answer_chars: config.max_answer_chars,
       };
       db.put(session, res.locals.owner, fingerprint);
-      if (live) {
-        const form = new FormData();
-        form.set("persona", input.persona);
-        form.set("pitch", input.pitch);
-        files.forEach((f) =>
-          form.append(
-            "files",
-            new Blob([new Uint8Array(f.buffer)]),
-            f.originalname,
-          ),
-        );
-        const result = await upstream(`/api/v1/sessions/${id}`, {
-          method: "PUT",
-          body: form,
-        });
-        Object.assign(session, {
-          status: result.status,
-          questions: result.questions,
-          assessment: result.assessment,
-          advice: result.advice,
-        });
+      if (session.mode === "live") {
+        persistAttachments(id, files);
+        session.stage_error = undefined;
+        db.put(session, res.locals.owner, fingerprint);
+        res.status(202).json(session);
+        await runStage(session, res.locals.owner, fingerprint);
       } else {
         session.questions = stubQuestions(session);
         session.status = "awaiting_answers";
       }
       session.updated_at = new Date().toISOString();
       db.put(session, res.locals.owner, fingerprint);
-      res.json(session);
+      if (!res.headersSent) res.json(session);
     });
   });
   app.put("/api/v1/sessions/:id/answers", async (req, res) => {
     const id = uuid.parse(req.params.id);
     await locked(id, async () => {
       const row = get(id, res.locals.owner);
-      const config = await getConfig();
       const session = row.session;
       const { answers } = z
         .object({
@@ -295,7 +365,11 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
             .array(
               z.object({
                 question_id: z.string(),
-                answer: z.string().trim().min(1).max(config.max_answer_chars),
+                answer: z
+                  .string()
+                  .trim()
+                  .min(1)
+                  .max(session.max_answer_chars ?? stubConfig.max_answer_chars),
               }),
             )
             .max(50),
@@ -335,25 +409,34 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
       session.answers = ordered;
       session.status = "analyzing";
       db.put(session, res.locals.owner, row.fingerprint);
-      if (live) {
-        const result = await upstream(`/api/v1/sessions/${id}/answers`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answers: ordered }),
-        });
-        Object.assign(session, {
-          status: result.status,
-          questions: result.questions,
-          assessment: result.assessment,
-          advice: result.advice,
-        });
+      if (session.mode === "live") {
+        session.stage_error = undefined;
+        db.put(session, res.locals.owner, row.fingerprint);
+        res.status(202).json(session);
+        await runStage(session, res.locals.owner, row.fingerprint);
       } else {
         Object.assign(session, stubAssessment(session, ordered));
         session.status = "completed";
       }
       session.updated_at = new Date().toISOString();
       db.put(session, res.locals.owner, row.fingerprint);
-      res.json(session);
+      if (!res.headersSent) res.json(session);
+    });
+  });
+  app.post("/api/app/sessions/:id/retry", async (req, res) => {
+    const row = get(req.params.id, res.locals.owner);
+    if (
+      row.session.mode !== "live" ||
+      !["generating_questions", "analyzing"].includes(row.session.status)
+    ) {
+      res.json(row.session);
+      return;
+    }
+    await locked(row.session.id, async () => {
+      row.session.stage_error = undefined;
+      db.put(row.session, res.locals.owner, row.fingerprint);
+      res.status(202).json(row.session);
+      await runStage(row.session, res.locals.owner, row.fingerprint);
     });
   });
   app.delete("/api/app/sessions/:id", (req, res) => {
@@ -361,6 +444,7 @@ export function createApp(dataDir = process.env.DATA_DIR ?? "./data") {
     if (locks.has(session.id))
       throw new ApiError(409, "busy", "Дождись завершения обработки.");
     db.delete(session.id, res.locals.owner);
+    clearAttachments(session.id);
     res.status(204).end();
   });
   app.use("/api", (_req, _res, next) =>
